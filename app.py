@@ -3,12 +3,10 @@ import copy
 import numpy as np
 import pandas as pd
 import streamlit as st
-import matplotlib.pyplot as plt
 from dataclasses import asdict
 
 from materials_db import MATERIAL_PRESETS, REFERENCES_TEXT
 from sintering_core import Params, simulate, predict_properties
-from visualization import draw_microstructure
 from experiments import EXPERIMENT_GUIDE, calibrate_from_csv
 
 st.set_page_config(page_title="AI焼結シミュレーター", layout="wide")
@@ -101,7 +99,7 @@ p.G0_um = float(preset.get('initial_grain_um', p.G0_um))
 p.mode = mode
 
 st.sidebar.header("2. イコライザー風 主要スライダー")
-st.sidebar.caption("手で摘むと、右側の微細構造・時系列・物性が変化します。")
+st.sidebar.caption("条件を設定した後、下の実行ボタンを押すと時系列・物性が更新されます。")
 p.target_temp_C = st.sidebar.slider("焼結温度 [°C]", 500, 2200, int(p.target_temp_C), 10)
 p.heating_rate_C_min = st.sidebar.slider("昇温速度 [°C/min]", 1.0, 50.0, 10.0, 0.5)
 ramp_time_s_default = max((p.target_temp_C - p.T0_C) / max(p.heating_rate_C_min, 1e-6) * 60.0, 0.0)
@@ -160,8 +158,11 @@ else:
     exp_df = None
 
 # --- Run simulation ---
-run = st.sidebar.button("シミュレーション実行", type="primary")
-if 'last_df' not in st.session_state or run:
+run = st.sidebar.button("条件を反映してシミュレーション実行", type="primary")
+
+# 重要: 初回表示やスライダー変更だけでは重いsimulate()を走らせない。
+# これにより「何も動かしていないのに固まる」「スライダーを触るたび固まる」症状を避ける。
+if run:
     with st.spinner("焼結過程を計算中..."):
         df = run_cached(asdict(p))
         dfp = predict_properties(df, p)
@@ -169,29 +170,22 @@ if 'last_df' not in st.session_state or run:
         st.session_state.last_dfp = dfp
         st.session_state.last_params = asdict(p)
 
+if 'last_df' not in st.session_state:
+    st.info("左の条件を設定し、［条件を反映してシミュレーション実行］を押してください。初回表示時には計算を行わない軽量仕様です。")
+    st.subheader("現在の材料設定")
+    st.json(preset)
+    st.markdown(EXPERIMENT_GUIDE)
+    st.stop()
+
 df = st.session_state.last_df
 dfp = st.session_state.last_dfp
 p_show = Params(**st.session_state.last_params)
 
 # --- Main display tabs ---
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["微細構造ビュー", "時系列", "物性予測", "実験フィードバック", "材料プリセット"])
+# 微細構造模式図は負荷が大きいため完全削除。物理計算は維持。
+tab1, tab2, tab3, tab4 = st.tabs(["時系列", "物性予測", "実験フィードバック", "材料プリセット"])
 
 with tab1:
-    st.subheader("粒子 → ネック成長 → 緻密多結晶への模式図")
-    c1, c2 = st.columns([2,1])
-    with c2:
-        time_pick = st.slider("観察時刻 [s]", float(df['t'].min()), float(df['t'].max()), float(df['t'].max()), step=max(float(df['t'].max()/200),1.0))
-        row = df.iloc[(df['t']-time_pick).abs().argmin()]
-        st.metric("相対密度", f"{row['rho']:.3f}")
-        st.metric("気孔率", f"{row['porosity']:.3f}")
-        st.metric("平均粒径", f"{row['G_um']:.2f} µm")
-        st.write("有効モデル:", row['active_model'])
-    with c1:
-        fig = draw_microstructure(float(row['rho']), float(row['G_um']), float(row['porosity']), int(row['liquid_flag']), seed=int(row['t'])%999+1)
-        st.pyplot(fig, clear_figure=True)
-    st.caption("相対密度が上がると、円形粒子の集合から、粒界を持つ緻密多結晶模式図へ連続的に切り替わります。目標到達相対密度と緻密化計算倍率を調整すると、完全緻密に近い状態まで表示できます。")
-
-with tab2:
     st.subheader("密度・粒径・気孔率の時系列出力")
     plot_df = df.set_index('t')
     st.line_chart(plot_df[['rho','porosity','G_um']])
@@ -200,7 +194,7 @@ with tab2:
         st.line_chart(plot_df[['surface_flag','gb_flag','lattice_flag','liquid_flag','closed_flag','abnormal_flag','thermal_runaway_flag']])
     st.download_button("時系列CSVをダウンロード", dfp.to_csv(index=False).encode('utf-8-sig'), file_name="sintering_result.csv")
 
-with tab3:
+with tab2:
     st.subheader("微細構造からの簡易物性予測")
     st.write("硬度: Hall-Petch / 逆Hall-Petch + Rice型気孔率補正 + Voigt-Reuss-Hill混合則")
     st.write("弾性率: 気孔率指数補正 + VRH混合則、靭性: 気孔率と粒径の簡易補正")
@@ -211,7 +205,7 @@ with tab3:
     m2.metric("最終弾性率", f"{last['Elastic_Modulus_GPa']:.1f} GPa")
     m3.metric("最終靭性", f"{last['KIC_MPa_m0.5']:.2f} MPa m^0.5")
 
-with tab4:
+with tab3:
     st.subheader("実験からシミュレータを育てる")
     st.markdown(EXPERIMENT_GUIDE)
     st.info("対応CSV列例: `t,rho_exp,G_exp,porosity_exp,shrinkage`。アップロード後にサイドバーのパラメタが簡易補正されます。Digital Twinモードでは、今後ここをベイズ最適化/EnKFへ拡張する想定です。")
@@ -219,7 +213,7 @@ with tab4:
         st.write("アップロード済みデータ")
         st.dataframe(exp_df.head(50))
 
-with tab5:
+with tab4:
     st.subheader("材料データ・カスタム材料")
     st.write("既定材料に加えて、学生ごとのテーマ材料はサイドバーの **カスタム材料** で入力できます。最小入力は、材料名、焼結様式、初期平均粒径、初期相対密度、代表焼結温度、保持時間、代表拡散係数/活性化エネルギーです。")
     st.json(preset)

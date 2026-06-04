@@ -44,6 +44,20 @@ class Params:
     KIC0_MPam05: float = 3
     hp_k: float = 0.15
     inverse_hp_threshold_um: float = 0.08
+
+    # 試料サイズ・炉・熱伝導（Digital Twinモードで1D熱伝導＋焼結連成に使用）
+    sample_shape: str = "円板"  # 円板 / 円柱 / 角板
+    sample_diameter_mm: float = 10.0
+    sample_thickness_mm: float = 3.0
+    sample_width_mm: float = 10.0
+    furnace_inner_diameter_mm: float = 80.0
+    furnace_uniformity_C: float = 5.0
+    thermal_conductivity_W_mK: float = 10.0
+    density_bulk_kg_m3: float = 3900.0
+    heat_capacity_J_kgK: float = 800.0
+    heat_transfer_W_m2K: float = 80.0
+    thermal_nodes: int = 11
+
     # UI/研究用途の半定量調整: 文献D0だけでは過小評価になりやすいため、
     # TMA等で同定する緻密化倍率と到達密度を明示的に持たせる。
     densification_scale: float = 50.0
@@ -178,33 +192,137 @@ def neck_rate(G, Ds, Db, Dv, fl):
     return min(5e-3*k, 0.05)
 
 
+
+def _geometry_half_length_m(p: Params):
+    """1D熱伝導で解く代表長さ。円板/角板は厚み方向、円柱は半径方向を優先。"""
+    shape = str(getattr(p, "sample_shape", "円板"))
+    if "円柱" in shape:
+        return max(float(p.sample_diameter_mm) * 1e-3 / 2.0, 1e-4)
+    return max(float(p.sample_thickness_mm) * 1e-3 / 2.0, 1e-4)
+
+
+def _furnace_temperature_C(t, p: Params):
+    ramp = p.heating_rate_C_min / 60.0
+    return min(p.T0_C + ramp*t, p.target_temp_C)
+
+
+def _update_temperature_1d(T_nodes, T_env_K, dt, dx, p: Params):
+    """Digital Twin用の簡易1D熱伝導。中心-表面温度差を半定量的に表す軽量モデル。"""
+    n = len(T_nodes)
+    if n <= 2:
+        return np.full_like(T_nodes, T_env_K)
+
+    k = max(float(p.thermal_conductivity_W_mK), 1e-3)
+    rho_cp = max(float(p.density_bulk_kg_m3) * float(p.heat_capacity_J_kgK), 1.0)
+    alpha = k / rho_cp
+
+    # 炉径に対して試料が大きいほど実効熱伝達が落ちる簡略補正
+    sample_size = max(float(p.sample_diameter_mm), float(p.sample_width_mm), float(p.sample_thickness_mm))
+    furnace = max(float(p.furnace_inner_diameter_mm), sample_size + 1e-6)
+    blockage = np.clip(sample_size / furnace, 0.0, 0.95)
+    h_eff = max(float(p.heat_transfer_W_m2K), 1e-3) * (1.0 - 0.55 * blockage)
+
+    # explicit scheme stability guard: substep internally if needed
+    dt_stable = 0.35 * dx*dx / max(alpha, 1e-12)
+    nsub = int(max(1, np.ceil(dt / max(dt_stable, 1e-6))))
+    subdt = dt / nsub
+    T = T_nodes.astype(float).copy()
+    for _ in range(nsub):
+        old = T.copy()
+        T[1:-1] = old[1:-1] + alpha * subdt * (old[2:] - 2*old[1:-1] + old[:-2]) / (dx*dx)
+        # 両表面で対流境界。中心対称ではなく「厚み方向の両面加熱」の近似。
+        surf_coeff = h_eff / (rho_cp * max(dx, 1e-9))
+        T[0] = old[0] + alpha * subdt * 2*(old[1] - old[0])/(dx*dx) + surf_coeff*subdt*(T_env_K - old[0])
+        T[-1] = old[-1] + alpha * subdt * 2*(old[-2] - old[-1])/(dx*dx) + surf_coeff*subdt*(T_env_K - old[-1])
+    return T
+
+
+def _advance_sintering_state(T, rho, G, neck, dt, p: Params):
+    Ds, Db, Dv = diffusivities(T, p)
+    pore = max(1-rho, 0)
+    fl = flags(T, rho, G, p)
+    drho, active_model = densification_model(T, rho, G, pore, Ds, Db, Dv, fl, p)
+    dG = grain_growth(T, rho, G, pore, p, fl)
+    dX = neck_rate(G, Ds, Db, Dv, fl)
+    rho_cap = float(np.clip(p.target_final_density, p.rho0 + 0.02, 0.999))
+    rho = float(np.clip(rho + drho*dt, p.rho0, rho_cap))
+    G = float(max(G + dG*dt, 0.005))
+    neck = float(np.clip(neck + dX*dt, 0, 1))
+    return rho, G, neck, Ds, Db, Dv, drho, dG, active_model, fl
+
+
 def simulate(p: Params):
-    # Research mode: standard dt. Digital Twin: smaller dt + more diagnostic outputs.
-    dt = p.dt if p.mode == "Research" else max(p.dt/2, 0.5)
-    n = int(p.total_time_s//dt) + 1
-    rho, G, neck = p.rho0, p.G0_um, 0.04
+    # Research mode: 従来の0D平均場モデル。Digital Twin: 試料サイズを使う1D熱伝導＋焼結連成。
+    if p.mode != "Digital Twin":
+        dt = p.dt
+        n = int(p.total_time_s//dt) + 1
+        rho, G, neck = p.rho0, p.G0_um, 0.04
+        rows = []
+        for i in range(n):
+            t = i*dt
+            T = temp_profile(t, p)
+            rho, G, neck, Ds, Db, Dv, drho, dG, active_model, fl = _advance_sintering_state(T, rho, G, neck, dt, p)
+            rows.append({"t":t,"T_C":T-273.15,"T_surface_C":T-273.15,"T_center_C":T-273.15,"deltaT_C":0.0,
+                         "rho":rho,"rho_surface":rho,"rho_center":rho,"rho_gradient":0.0,
+                         "porosity":1-rho,"G_um":G,"neck":neck,
+                         "Ds":Ds,"Db":Db,"Dv":Dv,"d_rho_dt":drho,"dG_dt":dG,"active_model":active_model,
+                         **{k+"_flag":v for k,v in fl.items()}})
+        return pd.DataFrame(rows)
+
+    # Digital Twin: 1D through-thickness/radius thermal calculation with local sintering state per node.
+    dt = max(p.dt, 0.5)
+    nstep = int(p.total_time_s//dt) + 1
+    nnode = int(np.clip(getattr(p, "thermal_nodes", 11), 5, 31))
+    L = _geometry_half_length_m(p)
+    # ここでは -L..+L を解くため全厚み/直径方向。dxは代表節点間隔。
+    x = np.linspace(-L, L, nnode)
+    dx = max(x[1] - x[0], 1e-6)
+    T_nodes = np.full(nnode, p.T0_C + 273.15, dtype=float)
+    rho_nodes = np.full(nnode, p.rho0, dtype=float)
+    G_nodes = np.full(nnode, p.G0_um, dtype=float)
+    neck_nodes = np.full(nnode, 0.04, dtype=float)
     rows = []
-    for i in range(n):
+
+    for i in range(nstep):
         t = i*dt
-        T = temp_profile(t, p)
-        # local Joule heating / digital twin only resolves stronger field influence
-        if p.mode == "Digital Twin":
-            T += np.clip(abs(p.E_V_m*p.J_A_m2)*1e-8, 0, 250)
-        Ds, Db, Dv = diffusivities(T, p)
-        pore = max(1-rho, 0)
-        fl = flags(T, rho, G, p)
-        drho, active_model = densification_model(T, rho, G, pore, Ds, Db, Dv, fl, p)
-        dG = grain_growth(T, rho, G, pore, p, fl)
-        dX = neck_rate(G, Ds, Db, Dv, fl)
-        rho_cap = float(np.clip(p.target_final_density, p.rho0 + 0.02, 0.999))
-        rho = float(np.clip(rho + drho*dt, p.rho0, rho_cap))
-        G = float(max(G + dG*dt, 0.005))
-        neck = float(np.clip(neck + dX*dt, 0, 1))
-        rows.append({"t":t,"T_C":T-273.15,"rho":rho,"porosity":1-rho,"G_um":G,"neck":neck,
-                     "Ds":Ds,"Db":Db,"Dv":Dv,"d_rho_dt":drho,"dG_dt":dG,"active_model":active_model,
+        T_env_C = _furnace_temperature_C(t, p)
+        # 炉内均熱性: 時間とともに弱い周期的ゆらぎとして反映。再現性のため決定論的。
+        T_env_C += float(p.furnace_uniformity_C) * 0.15 * np.sin(2*np.pi*t/max(p.total_time_s, 1.0))
+        T_env_K = T_env_C + 273.15
+        T_nodes = _update_temperature_1d(T_nodes, T_env_K, dt, dx, p)
+
+        # 電場/通電のジュール発熱は全体に加える。サイズが大きいほど抜熱が遅い簡略補正。
+        if abs(p.E_V_m*p.J_A_m2) > 0:
+            joule = np.clip(abs(p.E_V_m*p.J_A_m2)*1e-8, 0, 250)
+            T_nodes += joule * dt / max(p.total_time_s, dt)
+
+        Ds_list=[]; Db_list=[]; Dv_list=[]; drho_list=[]; dG_list=[]; model_list=[]; fl_list=[]
+        for j in range(nnode):
+            rho_nodes[j], G_nodes[j], neck_nodes[j], Ds, Db, Dv, drho, dG, active_model, fl = _advance_sintering_state(
+                T_nodes[j], float(rho_nodes[j]), float(G_nodes[j]), float(neck_nodes[j]), dt, p
+            )
+            Ds_list.append(Ds); Db_list.append(Db); Dv_list.append(Dv); drho_list.append(drho); dG_list.append(dG)
+            model_list.append(active_model); fl_list.append(fl)
+
+        # 代表値: 平均、表面平均、中心値
+        center_idx = nnode // 2
+        surf_rho = float(0.5*(rho_nodes[0] + rho_nodes[-1]))
+        center_rho = float(rho_nodes[center_idx])
+        avg_rho = float(np.mean(rho_nodes))
+        avg_G = float(np.mean(G_nodes))
+        avg_neck = float(np.mean(neck_nodes))
+        T_surf = float(0.5*(T_nodes[0] + T_nodes[-1]) - 273.15)
+        T_center = float(T_nodes[center_idx] - 273.15)
+        fl = fl_list[center_idx]
+        rows.append({"t":t,"T_C":float(np.mean(T_nodes)-273.15),"T_surface_C":T_surf,"T_center_C":T_center,
+                     "deltaT_C":abs(T_surf - T_center),
+                     "rho":avg_rho,"rho_surface":surf_rho,"rho_center":center_rho,"rho_gradient":abs(surf_rho-center_rho),
+                     "porosity":1-avg_rho,"G_um":avg_G,"neck":avg_neck,
+                     "Ds":float(np.mean(Ds_list)),"Db":float(np.mean(Db_list)),"Dv":float(np.mean(Dv_list)),
+                     "d_rho_dt":float(np.mean(drho_list)),"dG_dt":float(np.mean(dG_list)),
+                     "active_model":model_list[center_idx],
                      **{k+"_flag":v for k,v in fl.items()}})
     return pd.DataFrame(rows)
-
 
 def predict_properties(df, p: Params, second_phase_E_GPa=700, second_phase_H_GPa=20):
     out = df.copy()

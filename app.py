@@ -104,15 +104,29 @@ st.sidebar.header("2. イコライザー風 主要スライダー")
 st.sidebar.caption("手で摘むと、右側の微細構造・時系列・物性が変化します。")
 p.target_temp_C = st.sidebar.slider("焼結温度 [°C]", 500, 2200, int(p.target_temp_C), 10)
 p.heating_rate_C_min = st.sidebar.slider("昇温速度 [°C/min]", 1.0, 50.0, 10.0, 0.5)
-p.total_time_s = st.sidebar.slider("総時間 [s]", 300, 30000, int(max(p.hold_time_s, 3600)), 300)
+ramp_time_s_default = max((p.target_temp_C - p.T0_C) / max(p.heating_rate_C_min, 1e-6) * 60.0, 0.0)
+default_total_s = int(max(ramp_time_s_default + float(getattr(p, "hold_time_s", 3600)), 3600))
+st.sidebar.caption(f"昇温だけで約 {ramp_time_s_default/3600:.2f} h 必要です。総時間は昇温＋保持で設定します。")
+time_unit = st.sidebar.radio("時間単位", ["秒", "時間"], horizontal=True)
+if time_unit == "秒":
+    p.total_time_s = st.sidebar.slider("総時間 [s]", 300, 172800, default_total_s, 300)
+else:
+    total_h = st.sidebar.slider("総時間 [h]", 0.5, 48.0, float(default_total_s/3600), 0.5)
+    p.total_time_s = total_h * 3600
+if p.total_time_s < ramp_time_s_default:
+    st.sidebar.warning("総時間が昇温時間より短いため、保持温度に到達する前に計算が終了します。密度はほとんど上がりません。")
 p.rho0 = st.sidebar.slider("初期相対密度", 0.35, 0.75, float(p.rho0), 0.01)
 p.G0_um = st.sidebar.slider("初期平均粒径 [µm]", 0.02, 10.0, float(p.G0_um), 0.01)
 p.sintering_aid_fraction = st.sidebar.slider("焼結助剤/液相量", 0.0, 0.30, float(p.sintering_aid_fraction), 0.005)
 p.second_phase_fraction = st.sidebar.slider("第二相・ナノ分散相量", 0.0, 0.30, float(p.second_phase_fraction), 0.005)
 p.second_phase_radius_um = st.sidebar.slider("第二相半径 [µm]", 0.01, 2.0, float(p.second_phase_radius_um), 0.01)
+st.sidebar.caption("密度が0.99付近まで上がらない場合は、焼結時間を長くするか、下の詳細設定で緻密化倍率を上げてください。")
 
 with st.sidebar.expander("詳細パラメタ: 拡散・液相・雰囲気・電場"):
     p.dt = st.slider("dt [s]", 0.5, 20.0, 2.0, 0.5)
+
+    p.target_final_density = st.slider("目標到達相対密度", 0.90, 0.999, float(p.target_final_density), 0.001)
+    p.densification_scale = st.slider("緻密化計算倍率（TMA校正用）", 0.1, 200.0, float(p.densification_scale), 0.1)
     p.liquid_temp_C = st.slider("液相/反応開始温度 [°C]", 500, 2200, int(p.liquid_temp_C if p.liquid_temp_C < 9000 else 2200), 10)
     p.viscosity_log10_Pa_s_at_liquid = st.slider("液相粘度 log10(Pa s)", 0.0, 8.0, 3.0, 0.1)
     p.Ds0 = st.number_input("Ds0 [m²/s]", value=float(p.Ds0), format="%.2e")
@@ -175,7 +189,7 @@ with tab1:
     with c1:
         fig = draw_microstructure(float(row['rho']), float(row['G_um']), float(row['porosity']), int(row['liquid_flag']), seed=int(row['t'])%999+1)
         st.pyplot(fig, clear_figure=True)
-    st.caption("相対密度が上がると、円形粒子の集合から、粒界を持つ緻密多結晶模式図へ連続的に切り替わります。")
+    st.caption("相対密度が上がると、円形粒子の集合から、粒界を持つ緻密多結晶模式図へ連続的に切り替わります。目標到達相対密度と緻密化計算倍率を調整すると、完全緻密に近い状態まで表示できます。")
 
 with tab2:
     st.subheader("密度・粒径・気孔率の時系列出力")

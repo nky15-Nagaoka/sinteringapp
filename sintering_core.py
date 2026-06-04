@@ -44,6 +44,10 @@ class Params:
     KIC0_MPam05: float = 3
     hp_k: float = 0.15
     inverse_hp_threshold_um: float = 0.08
+    # UI/研究用途の半定量調整: 文献D0だけでは過小評価になりやすいため、
+    # TMA等で同定する緻密化倍率と到達密度を明示的に持たせる。
+    densification_scale: float = 50.0
+    target_final_density: float = 0.995
 
 
 def temp_profile(t, p: Params):
@@ -121,9 +125,33 @@ def densification_model(T, rho, G, pore, Ds, Db, Dv, fl, p: Params):
     closed_penalty = 0.25 if fl['closed'] else 1.0
     pin_penalty = 1/(1 + 0.8*zener_pin(pore, G, p))
     surface_loss = Ds/max(Ds+Db+Dv, 1e-300)
-    drive = max(1-rho, 0)**1.2
-    rate = 2e-4*k*drive*geom*closed_penalty*pin_penalty*mechanism_factor
+
+    # 旧版は drive=(1-rho)^1.2 のため、後期焼結で急停止しやすかった。
+    # ここでは「目標到達密度」へ漸近する駆動力に変更し、
+    # 完全緻密化に近い 0.99 以上まで計算できるようにする。
+    rho_limit = float(np.clip(p.target_final_density, p.rho0 + 0.02, 0.999))
+    residual_drive = max(rho_limit - rho, 0.0)
+    drive = residual_drive**1.05
+
+    # 半定量モデルの絶対速度をTMA/実験で合わせ込むための倍率。
+    # プリセット値は文献値の初期シードなので、研究時はここを実験で校正する。
+    scale = max(float(p.densification_scale), 1e-6)
+
+    rate = 2e-4*k*drive*geom*closed_penalty*pin_penalty*mechanism_factor*scale
     rate *= max(0.05, 1-0.65*surface_loss)
+
+    # Kingery液相や助剤系では粒子再配列・溶解析出で後期も進みやすいので、
+    # 温度が十分高い場合のみ弱い経験的クロージャ項を加える。
+    TC = T - 273.15
+    if TC >= 0.92*p.target_temp_C:
+        hold_strength = np.clip((TC - 0.92*p.target_temp_C)/max(0.08*p.target_temp_C, 1.0), 0, 1)
+        aid_boost = 1.0 + 8.0*p.sintering_aid_fraction*p.aid_effect_strength
+        late_boost = 3.0 if fl['liquid'] else 1.0
+        empirical = 2.0e-5 * scale * hold_strength * aid_boost * late_boost * residual_drive
+        empirical *= (0.35 if fl['closed'] else 1.0)
+        rate += empirical
+
+    # target_final_densityを超えて暴走しないようにsimulate側でもクリップする。
     return max(rate, 0), model
 
 
@@ -168,7 +196,8 @@ def simulate(p: Params):
         drho, active_model = densification_model(T, rho, G, pore, Ds, Db, Dv, fl, p)
         dG = grain_growth(T, rho, G, pore, p, fl)
         dX = neck_rate(G, Ds, Db, Dv, fl)
-        rho = float(np.clip(rho + drho*dt, p.rho0, 0.999))
+        rho_cap = float(np.clip(p.target_final_density, p.rho0 + 0.02, 0.999))
+        rho = float(np.clip(rho + drho*dt, p.rho0, rho_cap))
         G = float(max(G + dG*dt, 0.005))
         neck = float(np.clip(neck + dX*dt, 0, 1))
         rows.append({"t":t,"T_C":T-273.15,"rho":rho,"porosity":1-rho,"G_um":G,"neck":neck,

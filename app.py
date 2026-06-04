@@ -315,7 +315,67 @@ with tab2:
     m3.metric("最終靭性", f"{last['KIC_MPa_m0.5']:.2f} MPa m^0.5")
 
 with tab3:
-    st.subheader("実験からシミュレータを育てる")
+st.subheader("シミュレーション精度の向上のための実験データ項目")
+
+```
+st.markdown("""
+```
+
+### このシミュレータの精度を更に向上させるために、あなたが実際に作る材料の以下の実験結果を入れることで、このシミュレータは精度が向上するように設計されています。
+
+### 得られたデータは左の **「3. 実験フィードバック」** の項目から入力してください。
+
+""")
+
+```
+guide_df = pd.DataFrame([
+    ["TMA（収縮率曲線）", "★★★★★", "緻密化速度、拡散係数、活性化エネルギー"],
+    ["アルキメデス密度", "★★★★★", "相対密度予測"],
+    ["SEM粒径測定", "★★★★★", "粒成長モデル"],
+    ["気孔率測定", "★★★★☆", "開気孔→閉気孔転移"],
+    ["焼結助剤量依存性", "★★★★☆", "液相焼結係数"],
+    ["第二相量依存性", "★★★★☆", "Zenerピン止め"],
+    ["XRD結晶相解析", "★★★☆☆", "相変態モデル"],
+    ["SPS電流・電圧履歴", "★★★☆☆", "電場焼結モデル"],
+    ["酸素分圧依存実験", "★★☆☆☆", "欠陥化学補正"],
+    ["水蒸気雰囲気試験", "★★☆☆☆", "粒界構造補正"],
+], columns=["実験項目", "推奨度", "シミュレータで改善される項目"])
+
+def color_stars(val):
+    if "★★★★★" in str(val):
+        return "background-color:#ff6b6b;color:white"
+    elif "★★★★☆" in str(val):
+        return "background-color:#ffa94d;color:white"
+    elif "★★★☆☆" in str(val):
+        return "background-color:#ffd43b"
+    elif "★★☆☆☆" in str(val):
+        return "background-color:#69db7c"
+    return ""
+
+st.dataframe(
+    guide_df.style.map(color_stars, subset=["推奨度"]),
+    use_container_width=True,
+    hide_index=True
+)
+
+st.info("""
+```
+
+研究初心者向け推奨セット
+
+① TMA収縮曲線
+② SEM粒径測定
+③ アルキメデス密度
+
+の3種類だけでも十分に高精度化が可能です。
+""")
+
+```
+if exp_df is not None:
+    st.write("アップロード済みデータ")
+    st.dataframe(exp_df.head(50))
+```
+
     st.markdown(EXPERIMENT_GUIDE)
     st.info("対応CSV列例: `t,rho_exp,G_exp,porosity_exp,shrinkage`。アップロード後にサイドバーのパラメタが簡易補正されます。Digital Twinモードでは、今後ここをベイズ最適化/EnKFへ拡張する想定です。")
     if exp_df is not None:

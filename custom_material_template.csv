@@ -1,0 +1,2 @@
+material_name,sintering_style,initial_grain_um,initial_relative_density,target_temp_C,hold_time_min,Db0_m2_s,Qb_kJ_mol,liquid_or_reaction_temp_C,sintering_aid_fraction,second_phase_fraction,second_phase_radius_um,E0_GPa,H0_GPa
+Example_Custom_Ceramic,固相焼結,0.5,0.55,1400,60,1.0e-10,220,9999,0.00,0.02,0.10,300,12

@@ -63,6 +63,22 @@ class Params:
     densification_scale: float = 50.0
     target_final_density: float = 0.995
 
+    # 物理寄与の重み（Researchは文献・経験値ベース、Digital Twinでは実験で同定する対象）
+    w_diffusion: float = 1.0
+    w_grain_growth: float = 1.0
+    w_liquid_phase: float = 1.0
+    w_sintering_aid: float = 1.0
+    w_second_phase_pinning: float = 1.0
+    w_atmosphere: float = 1.0
+    w_electric_field: float = 1.0
+    w_closed_pore: float = 1.0
+
+    # 実験フィードバック時の損失関数重み
+    loss_w_density: float = 1.0
+    loss_w_grain: float = 0.4
+    loss_w_porosity: float = 0.6
+    loss_w_property: float = 0.2
+
 
 def temp_profile(t, p: Params):
     ramp = p.heating_rate_C_min / 60.0
@@ -78,9 +94,19 @@ def defect_and_field_factors(T, p: Params):
     return f_o, f_h, f_e
 
 
+def _weighted_factor(base, weight):
+    """base=1なら変化なし。weight=0で無効、weight=1で既定効果、weight>1で強調。"""
+    return max(1.0 + float(weight) * (float(base) - 1.0), 1e-12)
+
+
 def diffusivities(T, p: Params):
     f_o, f_h, f_e = defect_and_field_factors(T, p)
-    aid = 1.0 + p.aid_effect_strength * p.sintering_aid_fraction * 10.0
+    # 雰囲気・電場効果は重みでON/OFF/強調できるようにする
+    f_o = _weighted_factor(f_o, p.w_atmosphere)
+    f_h = _weighted_factor(f_h, p.w_atmosphere)
+    f_e = _weighted_factor(f_e, p.w_electric_field)
+    aid_base = 1.0 + p.aid_effect_strength * p.sintering_aid_fraction * 10.0
+    aid = _weighted_factor(aid_base, p.w_sintering_aid)
     # MgOなど粒成長抑制助剤はaid_effect_strength<1で表現可能
     Ds = p.Ds0 * f_e * aid * np.exp(-p.Qs/(R*T))
     Db = p.Db0 * f_h * f_e * aid * np.exp(-p.Qb/(R*T))
@@ -130,14 +156,15 @@ def densification_model(T, rho, G, pore, Ds, Db, Dv, fl, p: Params):
         rearrangement = capillary*wetting/(Gm**1.5)
         solution_precip = (Db + Dv)/(Gm**2) * wetting
         k = 1e-8*rearrangement + solution_precip
-        mechanism_factor = 3.0 if fl['liquid'] else 0.15
+        mechanism_factor = (3.0 if fl['liquid'] else 0.15) * max(p.w_liquid_phase, 0.0)
     else:
         k = Db/Gm**3
         mechanism_factor = 1.0
 
     geom = 1/max(p.aspect_ratio, 0.2)/max(p.agglomeration_factor, 1.0)
-    closed_penalty = 0.25 if fl['closed'] else 1.0
-    pin_penalty = 1/(1 + 0.8*zener_pin(pore, G, p))
+    closed_base = 0.25 if fl['closed'] else 1.0
+    closed_penalty = closed_base ** max(p.w_closed_pore, 0.0)
+    pin_penalty = 1/(1 + 0.8*max(p.w_second_phase_pinning, 0.0)*zener_pin(pore, G, p))
     surface_loss = Ds/max(Ds+Db+Dv, 1e-300)
 
     # 旧版は drive=(1-rho)^1.2 のため、後期焼結で急停止しやすかった。
@@ -151,7 +178,8 @@ def densification_model(T, rho, G, pore, Ds, Db, Dv, fl, p: Params):
     # プリセット値は文献値の初期シードなので、研究時はここを実験で校正する。
     scale = max(float(p.densification_scale), 1e-6)
 
-    rate = 2e-4*k*drive*geom*closed_penalty*pin_penalty*mechanism_factor*scale
+    aid_extra = 1.0 + max(p.w_sintering_aid, 0.0) * p.sintering_aid_fraction * p.aid_effect_strength * 2.0
+    rate = 2e-4*k*drive*geom*closed_penalty*pin_penalty*mechanism_factor*scale*max(p.w_diffusion, 0.0)*aid_extra
     rate *= max(0.05, 1-0.65*surface_loss)
 
     # Kingery液相や助剤系では粒子再配列・溶解析出で後期も進みやすいので、
@@ -159,8 +187,8 @@ def densification_model(T, rho, G, pore, Ds, Db, Dv, fl, p: Params):
     TC = T - 273.15
     if TC >= 0.92*p.target_temp_C:
         hold_strength = np.clip((TC - 0.92*p.target_temp_C)/max(0.08*p.target_temp_C, 1.0), 0, 1)
-        aid_boost = 1.0 + 8.0*p.sintering_aid_fraction*p.aid_effect_strength
-        late_boost = 3.0 if fl['liquid'] else 1.0
+        aid_boost = 1.0 + 8.0*p.sintering_aid_fraction*p.aid_effect_strength*max(p.w_sintering_aid, 0.0)
+        late_boost = (3.0*max(p.w_liquid_phase, 0.0)) if fl['liquid'] else 1.0
         empirical = 2.0e-5 * scale * hold_strength * aid_boost * late_boost * residual_drive
         empirical *= (0.35 if fl['closed'] else 1.0)
         rate += empirical
@@ -178,9 +206,10 @@ def grain_growth(T, rho, G, pore, p: Params, fl):
     driving = max(2*p.gamma_b/Gm - pin, 0)
     rate = Mb*driving*1e6
     if fl['liquid']:
-        rate *= 2.5
+        rate *= 2.5 * max(p.w_liquid_phase, 0.0)
+    rate *= max(p.w_grain_growth, 0.0)
     # nanocomposite/second phase pinning suppresses coarsening
-    rate /= (1 + 30*p.second_phase_fraction/max(p.second_phase_radius_um, 0.03))
+    rate /= (1 + 30*max(p.w_second_phase_pinning, 0.0)*p.second_phase_fraction/max(p.second_phase_radius_um, 0.03))
     return max(rate, 0)
 
 

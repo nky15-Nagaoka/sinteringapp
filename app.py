@@ -110,11 +110,61 @@ def render_physics_guide():
             return "background-color:#74c0fc;color:#102a43;font-weight:bold"
         return ""
 
-    st.dataframe(
-        guide_df.style.applymap(style_importance, subset=["焼結に与える影響度"]),
-        use_container_width=True,
-        hide_index=True,
-    )
+    # pandas/Streamlit Cloud のバージョン差で Styler.applymap が使えない環境があるため、
+    # CSS付きHTMLテーブルとして表示します。これにより AttributeError を避けつつ、
+    # 影響度は色付きで見やすく表示できます。
+    def impact_cell(stars):
+        text = str(stars)
+        if "★★★★★" in text:
+            color = "#e03131"; fg = "white"
+        elif "★★★★☆" in text:
+            color = "#f08c00"; fg = "white"
+        elif "★★★☆☆" in text:
+            color = "#ffd43b"; fg = "#212529"
+        elif "★★☆☆☆" in text:
+            color = "#74c0fc"; fg = "#102a43"
+        else:
+            color = "#dee2e6"; fg = "#212529"
+        return f'<span style="display:inline-block;padding:4px 8px;border-radius:10px;background:{color};color:{fg};font-weight:700;white-space:nowrap;">{text}</span>'
+
+    table_html = """
+    <style>
+    .physics-guide-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.92rem;
+    }
+    .physics-guide-table th {
+        background: #0b5ed7;
+        color: white;
+        padding: 8px;
+        border: 1px solid #d0d7de;
+        text-align: left;
+    }
+    .physics-guide-table td {
+        padding: 8px;
+        border: 1px solid #d0d7de;
+        vertical-align: top;
+    }
+    .physics-guide-table tr:nth-child(even) { background: #f8f9fa; }
+    </style>
+    <table class="physics-guide-table">
+    <thead><tr>
+    <th>項目</th><th>概要</th><th>代表式</th><th>焼結に与える影響度</th><th>主な影響</th>
+    </tr></thead><tbody>
+    """
+    for _, r in guide_df.iterrows():
+        table_html += (
+            "<tr>"
+            f"<td><b>{r['項目']}</b></td>"
+            f"<td>{r['概要']}</td>"
+            f"<td><code>{r['代表式']}</code></td>"
+            f"<td>{impact_cell(r['焼結に与える影響度'])}</td>"
+            f"<td>{r['主な影響']}</td>"
+            "</tr>"
+        )
+    table_html += "</tbody></table>"
+    st.markdown(table_html, unsafe_allow_html=True)
 
     with st.expander("影響度の読み方"):
         st.markdown(

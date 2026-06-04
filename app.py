@@ -264,12 +264,13 @@ p.target_temp_C = st.sidebar.slider("焼結温度 [°C]", 500, 2200, int(p.targe
 p.heating_rate_C_min = st.sidebar.slider("昇温速度 [°C/min]", 1.0, 50.0, 10.0, 0.5)
 ramp_time_s_default = max((p.target_temp_C - p.T0_C) / max(p.heating_rate_C_min, 1e-6) * 60.0, 0.0)
 default_total_s = int(max(ramp_time_s_default + float(getattr(p, "hold_time_s", 3600)), 3600))
-st.sidebar.caption(f"昇温だけで約 {ramp_time_s_default/3600:.2f} h 必要です。総時間は昇温＋保持で設定します。")
+st.sidebar.caption(f"昇温だけで約 {ramp_time_s_default/3600:.2f} h 必要です。総時間は最大3時間までに制限しています。")
 time_unit = st.sidebar.radio("時間単位", ["秒", "時間"], horizontal=True)
 if time_unit == "秒":
-    p.total_time_s = st.sidebar.slider("総時間 [s]", 300, 172800, default_total_s, 300)
+    max_total_time_s = 3 * 3600
+    p.total_time_s = st.sidebar.slider("総時間 [s]", 300, max_total_time_s, min(default_total_s, max_total_time_s), 300)
 else:
-    total_h = st.sidebar.slider("総時間 [h]", 0.5, 48.0, float(default_total_s/3600), 0.5)
+    total_h = st.sidebar.slider("総時間 [h]", 0.5, 3.0, min(float(default_total_s/3600), 3.0), 0.1)
     p.total_time_s = total_h * 3600
 if p.total_time_s < ramp_time_s_default:
     st.sidebar.warning("総時間が昇温時間より短いため、保持温度に到達する前に計算が終了します。密度はほとんど上がりません。")

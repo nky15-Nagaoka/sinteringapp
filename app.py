@@ -315,69 +315,59 @@ with tab2:
     m3.metric("最終靭性", f"{last['KIC_MPa_m0.5']:.2f} MPa m^0.5")
 
 with tab3:
-st.subheader("シミュレーション精度の向上のための実験データ項目")
+    st.subheader("シミュレーション精度の向上のための実験データ項目")
 
-```
-st.markdown("""
-```
-
+    st.markdown("""
 ### このシミュレータの精度を更に向上させるために、あなたが実際に作る材料の以下の実験結果を入れることで、このシミュレータは精度が向上するように設計されています。
 
 ### 得られたデータは左の **「3. 実験フィードバック」** の項目から入力してください。
-
 """)
 
-```
-guide_df = pd.DataFrame([
-    ["TMA（収縮率曲線）", "★★★★★", "緻密化速度、拡散係数、活性化エネルギー"],
-    ["アルキメデス密度", "★★★★★", "相対密度予測"],
-    ["SEM粒径測定", "★★★★★", "粒成長モデル"],
-    ["気孔率測定", "★★★★☆", "開気孔→閉気孔転移"],
-    ["焼結助剤量依存性", "★★★★☆", "液相焼結係数"],
-    ["第二相量依存性", "★★★★☆", "Zenerピン止め"],
-    ["XRD結晶相解析", "★★★☆☆", "相変態モデル"],
-    ["SPS電流・電圧履歴", "★★★☆☆", "電場焼結モデル"],
-    ["酸素分圧依存実験", "★★☆☆☆", "欠陥化学補正"],
-    ["水蒸気雰囲気試験", "★★☆☆☆", "粒界構造補正"],
-], columns=["実験項目", "推奨度", "シミュレータで改善される項目"])
+    feedback_df = pd.DataFrame([
+        ["TMA（収縮率曲線）", "★★★★★", "緻密化速度、拡散係数、活性化エネルギー"],
+        ["アルキメデス密度", "★★★★★", "相対密度予測、最終密度、閉気孔化条件"],
+        ["SEM粒径測定", "★★★★★", "粒成長モデル、第二相ピン止め、異常粒成長判定"],
+        ["気孔率測定", "★★★★☆", "開気孔→閉気孔転移、残留気孔、後期焼結"],
+        ["焼結助剤量依存性", "★★★★☆", "液相焼結係数、助剤効果係数、Kingeryモデル"],
+        ["第二相量依存性", "★★★★☆", "Zenerピン止め、粒成長抑制係数"],
+        ["XRD結晶相解析", "★★★☆☆", "相変態、反応焼結、液相/固相の判定"],
+        ["SPS電流・電圧履歴", "★★★☆☆", "電場焼結、ジュール発熱、熱暴走判定"],
+        ["酸素分圧依存実験", "★★☆☆☆", "欠陥化学補正、酸化物の拡散補正"],
+        ["水蒸気雰囲気試験", "★★☆☆☆", "粒界構造補正、非酸化物・助剤系の雰囲気効果"],
+    ], columns=["実験項目", "推奨度", "シミュレータで改善される項目"])
 
-def color_stars(val):
-    if "★★★★★" in str(val):
-        return "background-color:#ff6b6b;color:white"
-    elif "★★★★☆" in str(val):
-        return "background-color:#ffa94d;color:white"
-    elif "★★★☆☆" in str(val):
-        return "background-color:#ffd43b"
-    elif "★★☆☆☆" in str(val):
-        return "background-color:#69db7c"
-    return ""
+    def color_feedback_importance(val):
+        text = str(val)
+        if "★★★★★" in text:
+            return "background-color:#e03131;color:white;font-weight:bold"
+        if "★★★★☆" in text:
+            return "background-color:#f08c00;color:white;font-weight:bold"
+        if "★★★☆☆" in text:
+            return "background-color:#ffd43b;color:#212529;font-weight:bold"
+        if "★★☆☆☆" in text:
+            return "background-color:#74c0fc;color:#102a43;font-weight:bold"
+        return ""
 
-st.dataframe(
-    guide_df.style.map(color_stars, subset=["推奨度"]),
-    use_container_width=True,
-    hide_index=True
-)
+    st.dataframe(
+        feedback_df.style.applymap(color_feedback_importance, subset=["推奨度"]),
+        use_container_width=True,
+        hide_index=True,
+    )
 
-st.info("""
-```
-
+    st.info("""
 研究初心者向け推奨セット
 
-① TMA収縮曲線
-② SEM粒径測定
-③ アルキメデス密度
+① TMA収縮曲線  
+② SEM粒径測定  
+③ アルキメデス密度  
 
-の3種類だけでも十分に高精度化が可能です。
+この3種類だけでも、緻密化速度・粒成長・最終密度の校正ができるため、十分に高精度化が期待できます。
 """)
 
-```
-if exp_df is not None:
-    st.write("アップロード済みデータ")
-    st.dataframe(exp_df.head(50))
-```
+    with st.expander("CSV入力の例と補足"):
+        st.markdown(EXPERIMENT_GUIDE)
+        st.code("t,rho_exp,G_exp,porosity_exp,shrinkage\n0,0.55,0.50,0.45,0.00\n600,0.62,0.55,0.38,0.02", language="csv")
 
-    st.markdown(EXPERIMENT_GUIDE)
-    st.info("対応CSV列例: `t,rho_exp,G_exp,porosity_exp,shrinkage`。アップロード後にサイドバーのパラメタが簡易補正されます。Digital Twinモードでは、今後ここをベイズ最適化/EnKFへ拡張する想定です。")
     if exp_df is not None:
         st.write("アップロード済みデータ")
         st.dataframe(exp_df.head(50))

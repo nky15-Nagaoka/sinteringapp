@@ -265,12 +265,26 @@ p.heating_rate_C_min = st.sidebar.slider("昇温速度 [°C/min]", 1.0, 50.0, 10
 ramp_time_s_default = max((p.target_temp_C - p.T0_C) / max(p.heating_rate_C_min, 1e-6) * 60.0, 0.0)
 default_total_s = int(max(ramp_time_s_default + float(getattr(p, "hold_time_s", 3600)), 3600))
 st.sidebar.caption(f"昇温だけで約 {ramp_time_s_default/3600:.2f} h 必要です。総時間は最大3時間までに制限しています。")
-time_unit = st.sidebar.radio("時間単位", ["秒", "時間"], horizontal=True)
-if time_unit == "秒":
-    max_total_time_s = 3 * 3600
-    p.total_time_s = st.sidebar.slider("総時間 [s]", 300, max_total_time_s, min(default_total_s, max_total_time_s), 300)
+time_unit = st.sidebar.radio("時間単位", ["分", "時間"], horizontal=True)
+
+if time_unit == "分":
+    total_min = st.sidebar.slider(
+        "総時間 [min]",
+        5,
+        180,
+        min(int(default_total_s / 60), 180),
+        5
+    )
+    p.total_time_s = total_min * 60
+
 else:
-    total_h = st.sidebar.slider("総時間 [h]", 0.5, 3.0, min(float(default_total_s/3600), 3.0), 0.1)
+    total_h = st.sidebar.slider(
+        "総時間 [h]",
+        0.1,
+        3.0,
+        min(float(default_total_s / 3600), 3.0),
+        0.1
+    )
     p.total_time_s = total_h * 3600
 if p.total_time_s < ramp_time_s_default:
     st.sidebar.warning("総時間が昇温時間より短いため、保持温度に到達する前に計算が終了します。密度はほとんど上がりません。")
@@ -334,8 +348,13 @@ if run:
 if 'last_df' not in st.session_state:
     st.info("左の条件を設定し、［条件を反映してシミュレーション実行］を押してください。初回表示時には計算を行わない軽量仕様です。")
     render_material_summary(preset)
-    render_physics_guide()
-    st.markdown(EXPERIMENT_GUIDE)
+
+    with st.expander("物理理論ガイドを表示する", expanded=False):
+        render_physics_guide()
+
+    with st.expander("シミュレーション精度向上のための実験データ項目を表示する", expanded=False):
+        st.markdown(EXPERIMENT_GUIDE)
+
     st.stop()
 
 df = st.session_state.last_df
@@ -367,42 +386,31 @@ with tab2:
     m3.metric("最終靭性", f"{last['KIC_MPa_m0.5']:.2f} MPa m^0.5")
 
 with tab3:
-    st.subheader("シミュレーション精度の向上のための実験データ項目")
+    with st.expander("シミュレーション精度の向上のための実験データ項目を表示する", expanded=False):
+        st.subheader("シミュレーション精度の向上のための実験データ項目")
 
-    st.markdown("""
+        st.markdown("""
 ### このシミュレータの精度を更に向上させるために、あなたが実際に作る材料の以下の実験結果を入れることで、このシミュレータは精度が向上するように設計されています。
 
 ### 得られたデータは左の **「3. 実験フィードバック」** の項目から入力してください。
 """)
 
-    feedback_df = pd.DataFrame([
-        ["TMA（収縮率曲線）", "★★★★★", "緻密化速度、拡散係数、活性化エネルギー"],
-        ["アルキメデス密度", "★★★★★", "相対密度予測、最終密度、閉気孔化条件"],
-        ["SEM粒径測定", "★★★★★", "粒成長モデル、第二相ピン止め、異常粒成長判定"],
-        ["気孔率測定", "★★★★☆", "開気孔→閉気孔転移、残留気孔、後期焼結"],
-        ["焼結助剤量依存性", "★★★★☆", "液相焼結係数、助剤効果係数、Kingeryモデル"],
-        ["第二相量依存性", "★★★★☆", "Zenerピン止め、粒成長抑制係数"],
-        ["XRD結晶相解析", "★★★☆☆", "相変態、反応焼結、液相/固相の判定"],
-        ["SPS電流・電圧履歴", "★★★☆☆", "電場焼結、ジュール発熱、熱暴走判定"],
-        ["酸素分圧依存実験", "★★☆☆☆", "欠陥化学補正、酸化物の拡散補正"],
-        ["水蒸気雰囲気試験", "★★☆☆☆", "粒界構造補正、非酸化物・助剤系の雰囲気効果"],
-    ], columns=["実験項目", "推奨度", "シミュレータで改善される項目"])
+        feedback_df = pd.DataFrame([
+            ["TMA（収縮率曲線）", "★★★★★", "緻密化速度、拡散係数、活性化エネルギー"],
+            ["アルキメデス密度", "★★★★★", "相対密度予測、最終密度、閉気孔化条件"],
+            ["SEM粒径測定", "★★★★★", "粒成長モデル、第二相ピン止め、異常粒成長判定"],
+            ["気孔率測定", "★★★★☆", "開気孔→閉気孔転移、残留気孔、後期焼結"],
+            ["焼結助剤量依存性", "★★★★☆", "液相焼結係数、助剤効果係数、Kingeryモデル"],
+            ["第二相量依存性", "★★★★☆", "Zenerピン止め、粒成長抑制係数"],
+            ["XRD結晶相解析", "★★★☆☆", "相変態、反応焼結、液相/固相の判定"],
+            ["SPS電流・電圧履歴", "★★★☆☆", "電場焼結、ジュール発熱、熱暴走判定"],
+            ["酸素分圧依存実験", "★★☆☆☆", "欠陥化学補正、酸化物の拡散補正"],
+            ["水蒸気雰囲気試験", "★★☆☆☆", "粒界構造補正、非酸化物・助剤系の雰囲気効果"],
+        ], columns=["実験項目", "推奨度", "シミュレータで改善される項目"])
 
-    def color_feedback_importance(val):
-        text = str(val)
-        if "★★★★★" in text:
-            return "background-color:#e03131;color:white;font-weight:bold"
-        if "★★★★☆" in text:
-            return "background-color:#f08c00;color:white;font-weight:bold"
-        if "★★★☆☆" in text:
-            return "background-color:#ffd43b;color:#212529;font-weight:bold"
-        if "★★☆☆☆" in text:
-            return "background-color:#74c0fc;color:#102a43;font-weight:bold"
-        return ""
+        _render_colored_dataframe(feedback_df, "推奨度")
 
-    _render_colored_dataframe(feedback_df, "推奨度")
-
-    st.info("""
+        st.info("""
 研究初心者向け推奨セット
 
 ① TMA収縮曲線  
@@ -412,9 +420,9 @@ with tab3:
 この3種類だけでも、緻密化速度・粒成長・最終密度の校正ができるため、十分に高精度化が期待できます。
 """)
 
-    with st.expander("CSV入力の例と補足"):
-        st.markdown(EXPERIMENT_GUIDE)
-        st.code("t,rho_exp,G_exp,porosity_exp,shrinkage\n0,0.55,0.50,0.45,0.00\n600,0.62,0.55,0.38,0.02", language="csv")
+        with st.expander("CSV入力の例と補足"):
+            st.markdown(EXPERIMENT_GUIDE)
+            st.code("t,rho_exp,G_exp,porosity_exp,shrinkage\n0,0.55,0.50,0.45,0.00\n600,0.62,0.55,0.38,0.02", language="csv")
 
     if exp_df is not None:
         st.write("アップロード済みデータ")
@@ -434,4 +442,5 @@ with tab4:
     st.warning("プリセット・カスタム値はいずれも研究開始用の初期値です。TMA密度曲線、SEM粒径、気孔率、助剤量依存性を入れて校正してください。")
 
 with tab5:
-    render_physics_guide()
+    with st.expander("物理理論ガイドを表示する", expanded=False):
+        render_physics_guide()

@@ -17,6 +17,115 @@ st.caption("Researchモード / Digital Twinモード対応：焼結機構、微
 def run_cached(pdict):
     return simulate(Params(**pdict))
 
+def _fmt_value(v):
+    """Material summary display formatter."""
+    if isinstance(v, float):
+        if abs(v) != 0 and (abs(v) < 1e-3 or abs(v) >= 1e4):
+            return f"{v:.2e}"
+        return f"{v:.3g}"
+    return v
+
+def render_material_summary(preset: dict):
+    """Show material settings without raw JSON in the normal view."""
+    category = preset.get("category", "-")
+    model_hint = preset.get("model_hint", "-")
+    initial_grain = preset.get("initial_grain_um", "-")
+    rho0 = preset.get("rho0", "-")
+    target_temp = preset.get("target_temp_C", "-")
+    liquid_temp = preset.get("liquid_temp_C", "-")
+    hold_s = preset.get("hold_time_s", "-")
+
+    st.markdown("#### 現在の材料設定")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("焼結様式", str(category))
+    c2.metric("推奨モデル", str(model_hint))
+    c3.metric("初期粒径", f"{initial_grain} µm")
+    c4.metric("初期相対密度", f"{rho0}")
+
+    c5, c6, c7 = st.columns(3)
+    c5.metric("焼結温度", f"{target_temp} °C")
+    c6.metric("液相/反応開始", f"{liquid_temp} °C")
+    try:
+        c7.metric("保持時間", f"{float(hold_s)/60:.1f} min")
+    except Exception:
+        c7.metric("保持時間", str(hold_s))
+
+    rows = [
+        ("Ds0 表面拡散前因子", preset.get("Ds0", "-"), "m²/s"),
+        ("Db0 粒界拡散前因子", preset.get("Db0", "-"), "m²/s"),
+        ("Dv0 格子拡散前因子", preset.get("Dv0", "-"), "m²/s"),
+        ("Qs 表面拡散活性化エネルギー", preset.get("Qs", "-"), "J/mol"),
+        ("Qb 粒界拡散活性化エネルギー", preset.get("Qb", "-"), "J/mol"),
+        ("Qv 格子拡散活性化エネルギー", preset.get("Qv", "-"), "J/mol"),
+        ("第二相/ナノ分散相量", preset.get("second_phase_fraction", "-"), "fraction"),
+        ("焼結助剤/液相量", preset.get("sintering_aid_fraction", "-"), "fraction"),
+    ]
+    df = pd.DataFrame(rows, columns=["項目", "値", "単位"])
+    df["値"] = df["値"].map(_fmt_value)
+    st.dataframe(df, use_container_width=True, hide_index=True)
+
+    notes = preset.get("notes")
+    if notes:
+        st.info(notes)
+
+    with st.expander("開発者向け: 材料設定の詳細JSON"):
+        st.json(preset)
+
+def render_physics_guide():
+    """Colorful glossary for students."""
+    st.markdown("---")
+    st.markdown("## このアプリでは以下の物理理論を使って計算しています")
+    st.caption("各項目の意味、代表式、焼結挙動への効き方をまとめた学生向け用語集です。")
+
+    guide_rows = [
+        {"項目":"表面拡散係数 Ds","概要":"粒子表面に沿って原子・イオンが移動する速さ。ネックは成長するが、体積収縮への寄与は比較的小さい。","代表式":"Ds = Ds0 exp(-Qs/RT)","焼結に与える影響度":"★★★★☆","主な影響":"初期焼結、ネック成長、非緻密化成分"},
+        {"項目":"粒界拡散係数 Db","概要":"結晶粒界に沿った高速拡散。中期焼結で密度上昇を支配しやすい。","代表式":"Db = Db0 exp(-Qb/RT)","焼結に与える影響度":"★★★★★","主な影響":"緻密化、収縮速度、Coble型焼結"},
+        {"項目":"格子拡散係数 Dv","概要":"結晶粒内を通る体拡散。高温・後期焼結で重要になる。","代表式":"Dv = Dv0 exp(-Qv/RT)","焼結に与える影響度":"★★★★★","主な影響":"後期緻密化、Nabarro-Herring型焼結"},
+        {"項目":"活性化エネルギー Qs, Qb, Qv","概要":"拡散を起こすために必要なエネルギー。大きいほど同じ温度で拡散しにくい。","代表式":"D = D0 exp(-Q/RT)","焼結に与える影響度":"★★★★★","主な影響":"温度依存性、最適焼結温度、昇温条件"},
+        {"項目":"粒界エネルギー γb","概要":"粒界面積を減らそうとする駆動力。粒成長の主な原因になる。","代表式":"F ≈ 2γb/G","焼結に与える影響度":"★★★★☆","主な影響":"粒成長、異常粒成長、微細構造粗大化"},
+        {"項目":"表面エネルギー γs","概要":"粉末粒子の表面積を減らそうとする焼結の基本駆動力。","代表式":"ΔG ∝ γs A","焼結に与える影響度":"★★★★★","主な影響":"初期焼結、ネック形成、表面積低下"},
+        {"項目":"第二相ピン止め","概要":"第二相粒子やナノ分散相が粒界移動を妨げ、粒成長を抑える効果。","代表式":"Zener: Fpin ∝ f/r","焼結に与える影響度":"★★★★☆","主な影響":"粒成長抑制、微細粒維持、緻密化との競合"},
+        {"項目":"焼結助剤","概要":"拡散促進、液相形成、粒界構造変化により焼結温度を下げる添加物。","代表式":"材料依存の補正係数","焼結に与える影響度":"★★★★☆","主な影響":"低温緻密化、液相焼結、粒成長促進/抑制"},
+        {"項目":"液相生成","概要":"焼結中に液相が生じ、粒子再配列・溶解再析出により緻密化が進む。","代表式":"T ≥ T_liquid","焼結に与える影響度":"★★★★★","主な影響":"急速緻密化、Kingery型焼結、助剤系材料"},
+        {"項目":"酸素分圧 pO2","概要":"酸化物中の空孔や荷電欠陥濃度を変え、拡散係数を変化させる。","代表式":"欠陥化学補正","焼結に与える影響度":"★★★☆☆","主な影響":"酸化物の緻密化、粒界状態、雰囲気依存性"},
+        {"項目":"水蒸気分圧 pH2O","概要":"粒界構造や表面反応に影響し、特に非酸化物・助剤系で効く場合がある。","代表式":"雰囲気補正項","焼結に与える影響度":"★★☆☆☆","主な影響":"Si3N4/SiC系、粒界相、表面反応"},
+        {"項目":"電場・ジュール発熱","概要":"FAST/SPS/Flash焼結で電流により局所加熱や欠陥濃度変化が起きる。","代表式":"q = J·E または q = J²ρe","焼結に与える影響度":"★★★☆☆","主な影響":"局所昇温、熱暴走、電場促進拡散"},
+        {"項目":"開気孔→閉気孔転移","概要":"気孔が外部とつながった状態から孤立気孔になる転移。後期焼結を左右する。","代表式":"ρ ≈ 0.92 付近","焼結に与える影響度":"★★★★★","主な影響":"後期緻密化、残留気孔、最終密度"},
+        {"項目":"異常粒成長","概要":"一部の粒だけが急成長する現象。閉気孔の取り込みや特性低下を起こす。","代表式":"G > Gcrit","焼結に与える影響度":"★★★★☆","主な影響":"粗大粒、硬度低下、ばらつき増加"},
+        {"項目":"Cobleモデル","概要":"粒界拡散が支配的な焼結モデル。微粒・中温域でよく効く。","代表式":"dρ/dt ∝ Db/G³","焼結に与える影響度":"★★★★★","主な影響":"微粒粉末の緻密化、中期焼結"},
+        {"項目":"Nabarro-Herringモデル","概要":"格子拡散が支配的な高温クリープ/焼結モデル。","代表式":"dρ/dt ∝ Dv/G²","焼結に与える影響度":"★★★★☆","主な影響":"高温焼結、後期焼結、粗粒材料"},
+        {"項目":"Kingery液相焼結モデル","概要":"液相による再配列・溶解再析出・毛管力を考慮する液相焼結モデル。","代表式":"dρ/dt ∝ 液相量/粘度","焼結に与える影響度":"★★★★★","主な影響":"WC-Co、Si3N4助剤系、SiC助剤系"},
+    ]
+    guide_df = pd.DataFrame(guide_rows)
+
+    def style_importance(val):
+        text = str(val)
+        if "★★★★★" in text:
+            return "background-color:#e03131;color:white;font-weight:bold"
+        if "★★★★☆" in text:
+            return "background-color:#f08c00;color:white;font-weight:bold"
+        if "★★★☆☆" in text:
+            return "background-color:#ffd43b;color:#212529;font-weight:bold"
+        if "★★☆☆☆" in text:
+            return "background-color:#74c0fc;color:#102a43;font-weight:bold"
+        return ""
+
+    st.dataframe(
+        guide_df.style.applymap(style_importance, subset=["焼結に与える影響度"]),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    with st.expander("影響度の読み方"):
+        st.markdown(
+            """
+            - ★★★★★：密度・粒径・気孔率の予測に非常に強く効く
+            - ★★★★☆：材料系によって強く効く
+            - ★★★☆☆：条件によって重要
+            - ★★☆☆☆：補助的だが、特定材料では無視できない
+            """
+        )
+
 # --- Sidebar: unified controls ---
 st.sidebar.header("1. モード・材料選択")
 mode = st.sidebar.radio("計算モード", ["Research", "Digital Twin"], horizontal=True)
@@ -172,8 +281,8 @@ if run:
 
 if 'last_df' not in st.session_state:
     st.info("左の条件を設定し、［条件を反映してシミュレーション実行］を押してください。初回表示時には計算を行わない軽量仕様です。")
-    st.subheader("現在の材料設定")
-    st.json(preset)
+    render_material_summary(preset)
+    render_physics_guide()
     st.markdown(EXPERIMENT_GUIDE)
     st.stop()
 
@@ -183,7 +292,7 @@ p_show = Params(**st.session_state.last_params)
 
 # --- Main display tabs ---
 # 微細構造模式図は負荷が大きいため完全削除。物理計算は維持。
-tab1, tab2, tab3, tab4 = st.tabs(["時系列", "物性予測", "実験フィードバック", "材料プリセット"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["時系列", "物性予測", "実験フィードバック", "材料設定", "物理理論ガイド"])
 
 with tab1:
     st.subheader("密度・粒径・気孔率の時系列出力")
@@ -216,7 +325,7 @@ with tab3:
 with tab4:
     st.subheader("材料データ・カスタム材料")
     st.write("既定材料に加えて、学生ごとのテーマ材料はサイドバーの **カスタム材料** で入力できます。最小入力は、材料名、焼結様式、初期平均粒径、初期相対密度、代表焼結温度、保持時間、代表拡散係数/活性化エネルギーです。")
-    st.json(preset)
+    render_material_summary(preset)
     st.download_button(
         "この材料設定をCSVとして保存",
         pd.DataFrame([preset]).to_csv(index=False).encode('utf-8-sig'),
@@ -225,3 +334,6 @@ with tab4:
     )
     st.markdown(REFERENCES_TEXT)
     st.warning("プリセット・カスタム値はいずれも研究開始用の初期値です。TMA密度曲線、SEM粒径、気孔率、助剤量依存性を入れて校正してください。")
+
+with tab5:
+    render_physics_guide()

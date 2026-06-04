@@ -64,6 +64,17 @@ class Params:
     target_final_density: float = 0.995
 
     # 物理寄与の重み（Researchは文献・経験値ベース、Digital Twinでは実験で同定する対象）
+    #
+    # これらは「物理定数」ではなく、モデル寄与の半定量補正係数。
+    # app.pyのスライダーから変更できる。
+    #
+    # 1.0 : 標準
+    # 0.5 : 効果を弱める
+    # 2.0 : 効果を強める
+    # 0.0 : 感度解析用にほぼ無効化
+    #
+    # 実験データ（TMA、密度、SEM粒径など）に合わせて調整することで、
+    # 材料ごとのシミュレーション精度を上げる。
     w_diffusion: float = 1.0
     w_grain_growth: float = 1.0
     w_liquid_phase: float = 1.0

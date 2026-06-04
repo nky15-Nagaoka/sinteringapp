@@ -1,9 +1,10 @@
 AI焼結シミュレーター 修正版
 
-起動方法:
-  pip install -r requirements.txt
-  streamlit run app.py
-
 修正内容:
-  pandas/Streamlit Cloud のバージョン差で発生する Styler.applymap AttributeError を回避。
-  物理理論ガイドはCSS付きHTMLテーブルで表示。
+- pandas Styler.applymap を完全に使用しない実装に変更
+- 物理理論ガイド・実験フィードバック表はHTMLベースの色付き表で表示
+- Streamlit Cloud の pandas 互換性エラーを回避
+
+起動:
+pip install -r requirements.txt
+streamlit run app.py

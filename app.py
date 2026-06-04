@@ -71,6 +71,61 @@ def render_material_summary(preset: dict):
     with st.expander("開発者向け: 材料設定の詳細JSON"):
         st.json(preset)
 
+
+def _importance_color(stars: str) -> str:
+    """Return badge background color for star importance."""
+    text = str(stars)
+    if "★★★★★" in text:
+        return "#e03131"
+    if "★★★★☆" in text:
+        return "#f08c00"
+    if "★★★☆☆" in text:
+        return "#ffd43b"
+    if "★★☆☆☆" in text:
+        return "#74c0fc"
+    return "#adb5bd"
+
+
+def _render_colored_dataframe(df: pd.DataFrame, importance_col: str):
+    """Render a colorful HTML table without pandas Styler.applymap.
+
+    Streamlit Cloud can run newer pandas versions where Styler.applymap is removed.
+    This function avoids pandas Styler completely and is therefore more portable.
+    """
+    import html
+
+    header_cells = "".join(
+        f"<th style='text-align:left;padding:8px 10px;background:#f1f3f5;border-bottom:1px solid #dee2e6;'>{html.escape(str(c))}</th>"
+        for c in df.columns
+    )
+    body_rows = []
+    for _, row in df.iterrows():
+        cells = []
+        for col in df.columns:
+            val = row[col]
+            if col == importance_col:
+                bg = _importance_color(str(val))
+                fg = "#212529" if bg in ["#ffd43b", "#74c0fc"] else "white"
+                cell = (
+                    "<td style='padding:8px 10px;border-bottom:1px solid #edf2f7;'>"
+                    f"<span style='display:inline-block;padding:4px 10px;border-radius:999px;"
+                    f"background:{bg};color:{fg};font-weight:700;white-space:nowrap;'>"
+                    f"{html.escape(str(val))}</span></td>"
+                )
+            else:
+                cell = f"<td style='padding:8px 10px;border-bottom:1px solid #edf2f7;vertical-align:top;'>{html.escape(str(val))}</td>"
+            cells.append(cell)
+        body_rows.append("<tr>" + "".join(cells) + "</tr>")
+    table_html = (
+        "<div style='overflow-x:auto;'>"
+        "<table style='border-collapse:collapse;width:100%;font-size:0.92rem;'>"
+        "<thead><tr>" + header_cells + "</tr></thead>"
+        "<tbody>" + "".join(body_rows) + "</tbody>"
+        "</table></div>"
+    )
+    st.markdown(table_html, unsafe_allow_html=True)
+
+
 def render_physics_guide():
     """Colorful glossary for students."""
     st.markdown("---")
@@ -110,61 +165,7 @@ def render_physics_guide():
             return "background-color:#74c0fc;color:#102a43;font-weight:bold"
         return ""
 
-    # pandas/Streamlit Cloud のバージョン差で Styler.applymap が使えない環境があるため、
-    # CSS付きHTMLテーブルとして表示します。これにより AttributeError を避けつつ、
-    # 影響度は色付きで見やすく表示できます。
-    def impact_cell(stars):
-        text = str(stars)
-        if "★★★★★" in text:
-            color = "#e03131"; fg = "white"
-        elif "★★★★☆" in text:
-            color = "#f08c00"; fg = "white"
-        elif "★★★☆☆" in text:
-            color = "#ffd43b"; fg = "#212529"
-        elif "★★☆☆☆" in text:
-            color = "#74c0fc"; fg = "#102a43"
-        else:
-            color = "#dee2e6"; fg = "#212529"
-        return f'<span style="display:inline-block;padding:4px 8px;border-radius:10px;background:{color};color:{fg};font-weight:700;white-space:nowrap;">{text}</span>'
-
-    table_html = """
-    <style>
-    .physics-guide-table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 0.92rem;
-    }
-    .physics-guide-table th {
-        background: #0b5ed7;
-        color: white;
-        padding: 8px;
-        border: 1px solid #d0d7de;
-        text-align: left;
-    }
-    .physics-guide-table td {
-        padding: 8px;
-        border: 1px solid #d0d7de;
-        vertical-align: top;
-    }
-    .physics-guide-table tr:nth-child(even) { background: #f8f9fa; }
-    </style>
-    <table class="physics-guide-table">
-    <thead><tr>
-    <th>項目</th><th>概要</th><th>代表式</th><th>焼結に与える影響度</th><th>主な影響</th>
-    </tr></thead><tbody>
-    """
-    for _, r in guide_df.iterrows():
-        table_html += (
-            "<tr>"
-            f"<td><b>{r['項目']}</b></td>"
-            f"<td>{r['概要']}</td>"
-            f"<td><code>{r['代表式']}</code></td>"
-            f"<td>{impact_cell(r['焼結に与える影響度'])}</td>"
-            f"<td>{r['主な影響']}</td>"
-            "</tr>"
-        )
-    table_html += "</tbody></table>"
-    st.markdown(table_html, unsafe_allow_html=True)
+    _render_colored_dataframe(guide_df, "焼結に与える影響度")
 
     with st.expander("影響度の読み方"):
         st.markdown(
@@ -266,9 +267,9 @@ default_total_s = int(max(ramp_time_s_default + float(getattr(p, "hold_time_s", 
 st.sidebar.caption(f"昇温だけで約 {ramp_time_s_default/3600:.2f} h 必要です。総時間は昇温＋保持で設定します。")
 time_unit = st.sidebar.radio("時間単位", ["秒", "時間"], horizontal=True)
 if time_unit == "秒":
-    p.total_time_s = st.sidebar.slider("総時間 [s]", 300, 10800, min(default_total_s, 10800), 300)
+    p.total_time_s = st.sidebar.slider("総時間 [s]", 300, 172800, default_total_s, 300)
 else:
-    total_h = st.sidebar.slider("総時間 [h]", 0.5, 3.0, min(float(default_total_s/3600), 3.0), 0.1)
+    total_h = st.sidebar.slider("総時間 [h]", 0.5, 48.0, float(default_total_s/3600), 0.5)
     p.total_time_s = total_h * 3600
 if p.total_time_s < ramp_time_s_default:
     st.sidebar.warning("総時間が昇温時間より短いため、保持温度に到達する前に計算が終了します。密度はほとんど上がりません。")
@@ -398,11 +399,7 @@ with tab3:
             return "background-color:#74c0fc;color:#102a43;font-weight:bold"
         return ""
 
-    st.dataframe(
-        feedback_df.style.applymap(color_feedback_importance, subset=["推奨度"]),
-        use_container_width=True,
-        hide_index=True,
-    )
+    _render_colored_dataframe(feedback_df, "推奨度")
 
     st.info("""
 研究初心者向け推奨セット
